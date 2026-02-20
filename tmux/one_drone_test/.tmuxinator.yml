@@ -6,7 +6,10 @@ windows:
   - spawn:
       layout: even-horizontal
       panes:
-        - ros2 launch laser_challenge_simulation challenge_world.launch.py
+        - ros2 launch laser_uav_simulation gazebo.launch.py
+  - spawn_drone:
+      layout: even-horizontal
+      panes:
         - ros2 launch laser_uav_simulation spawn_drones.launch.py spawn_drones_file:=./configs/spawn.yaml
   - api:
       layout: even-horizontal
