@@ -24,6 +24,14 @@ windows:
       layout: even-horizontal
       panes:
         - sleep 1; ros2 run laser_uav_tui tui 
+  - gesture:
+      layout: even-horizontal
+      panes:
+        - 'history -s ros2 run laser_uav_missions gesture_control'
+  - spawn_bases:
+      layout: even-horizontal
+      panes:
+        - 'history -s ros2 run laser_challenge_simulation base_spawner.py'
   - control_manager:
       layout: tiled
       panes:
