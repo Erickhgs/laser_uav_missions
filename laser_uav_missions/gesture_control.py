@@ -48,8 +48,9 @@ class GestureControlNode(Node):
         self.takeoff_client = self.create_client(Trigger, f'/{self.uav_name}/control_manager/takeoff')
         self.land_client = self.create_client(Trigger, f'/{self.uav_name}/control_manager/land')
 
-        # Publisher
+        # Publishers
         self.goto_publisher = self.create_publisher(PoseWithHeading, f'/{self.uav_name}/control_manager/goto', 10)
+        self.goto_relative_publisher = self.create_publisher(PoseWithHeading, f'/{self.uav_name}/control_manager/goto_relative', 10)
         
         # Subscribers
         self.odom_sub = self.create_subscription(
@@ -66,7 +67,7 @@ class GestureControlNode(Node):
             10
         )
 
-        self.get_logger().info(f"Nó Iniciado. Controle: {self.control_step}m | Yaw: {self.heading_step}rad")
+        self.get_logger().info(f"Nó Iniciado. Controle Relativo: {self.control_step}m | Yaw: {self.heading_step}rad")
 
     def diag_callback(self, msg):
         self.is_fly = msg.is_fly
@@ -95,7 +96,7 @@ class GestureControlNode(Node):
         if self.takeoff_client.service_is_ready():
             self.takeoff_client.call_async(Trigger.Request())
             return True
-        return False
+        return False 
 
     def call_land(self):
         if self.land_client.service_is_ready():
@@ -104,13 +105,22 @@ class GestureControlNode(Node):
         return False
 
     def publish_position(self, direction_msg):
+        self.get_logger().info(f"Comando Absoluto acionado: {direction_msg} | X={self.target_x:.2f}, Y={self.target_y:.2f}, Z={self.target_z:.2f}")
         msg = PoseWithHeading()
         msg.position.x = self.target_x
         msg.position.y = self.target_y
         msg.position.z = self.target_z
         msg.heading = self.target_heading
-        
         self.goto_publisher.publish(msg)
+
+    def publish_relative_position(self, direction_msg, dx, dy, dz, dheading):
+        self.get_logger().info(f"Comando Relativo: {direction_msg} | dx={dx:.2f}, dy={dy:.2f}, dz={dz:.2f}, dyaw={dheading:.2f}")
+        msg = PoseWithHeading()
+        msg.position.x = float(dx)
+        msg.position.y = float(dy)
+        msg.position.z = float(dz)
+        msg.heading = float(dheading)
+        self.goto_relative_publisher.publish(msg)
 
 
 def main(args=None):
@@ -171,9 +181,8 @@ def main(args=None):
             current_time = time.time()
             annotated_frame = results[0].plot() if len(results) > 0 else frame_flipped
 
-
             if node.rtl_state > 0:
-                # 1: Espera estar no chão após mandar pousar na 6ª base
+                # RTL - MANTIDO COM GOTO ABSOLUTO
                 if node.rtl_state == 1:
                     cv2.putText(annotated_frame, "RTL: AGUARDANDO POUSO FINAL...", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
                     if not node.is_fly: 
@@ -181,14 +190,12 @@ def main(args=None):
                             node.rtl_timer = current_time 
                             node.rtl_state = 2
                         
-                # 2: Acionou decolagem. Espera cravado 5 segundos para estabilizar o voo
                 elif node.rtl_state == 2:
                     cv2.putText(annotated_frame, "RTL: DECOLANDO (ESPERANDO 5s)...", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
                     if (current_time - node.rtl_timer) > 5.0:
                         node.rtl_state = 3
                         last_cmd_time = 0.0
                         
-                # 3: Manda ir para a origem (0,0) até a controladora acusar have_goal = True
                 elif node.rtl_state == 3:
                     cv2.putText(annotated_frame, "RTL: ENVIANDO COMANDO HOME...", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
                     
@@ -204,7 +211,6 @@ def main(args=None):
                         node.rtl_state = 4
                         node.rtl_timer = current_time
                         
-                # 4: Navegando. Espera a flag have_goal ficar False (trajetória concluída)
                 elif node.rtl_state == 4:
                     cv2.putText(annotated_frame, "RTL: NAVEGANDO PARA HOME...", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
                     
@@ -212,22 +218,18 @@ def main(args=None):
                         if node.call_land(): 
                             node.rtl_state = 5
                             
-                # 5: Manda pousar e espera tocar no chão (is_fly = False)
                 elif node.rtl_state == 5:
                     cv2.putText(annotated_frame, "RTL: POUSANDO NA HOME...", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
                     if not node.is_fly: 
                         node.rtl_state = 6
                         node.get_logger().info("Missão concluída com sucesso!")
                         
-                # 6: Fim definitivo
                 elif node.rtl_state == 6:
                     cv2.putText(annotated_frame, "MISSAO 100% CONCLUIDA!", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
 
                 cv2.imshow('Gesture Control ROS 2 - YOLOv8', annotated_frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'): break
                 continue
-
-
 
             # 1. DECOLAR (one)
             if current_gesture == 'one':
@@ -238,7 +240,6 @@ def main(args=None):
                 if elapsed < node.takeoff_duration:
                     cv2.putText(annotated_frame, f"DECOLAR EM: {node.takeoff_duration - elapsed:.1f}s", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
                 elif not takeoff_triggered:
-                    node.target_z = 1.5
                     if node.call_takeoff(): takeoff_triggered = True
                 else:
                     cv2.putText(annotated_frame, "DECOLANDO...", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
@@ -267,8 +268,7 @@ def main(args=None):
             elif current_gesture == 'ok':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_z = min(15.0, node.target_z + node.control_step)
-                    node.publish_position("SUBIR")
+                    node.publish_relative_position("SUBIR", 0.0, 0.0, node.control_step, 0.0)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "SUBINDO", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -276,8 +276,7 @@ def main(args=None):
             elif current_gesture == 'rock':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_z = max(0.5, node.target_z - node.control_step)
-                    node.publish_position("DESCER")
+                    node.publish_relative_position("DESCER", 0.0, 0.0, -node.control_step, 0.0)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "DESCENDO", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -285,8 +284,7 @@ def main(args=None):
             elif current_gesture == 'two_up':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_y -= node.control_step
-                    node.publish_position("DIREITA")
+                    node.publish_relative_position("DIREITA", 0.0, -node.control_step, 0.0, 0.0)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "DIREITA", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -294,17 +292,15 @@ def main(args=None):
             elif current_gesture == 'two_up_inverted':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_y += node.control_step
-                    node.publish_position("ESQUERDA")
+                    node.publish_relative_position("ESQUERDA", 0.0, node.control_step, 0.0, 0.0)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "ESQUERDA", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
             # 7. FRENTE (fist)
-            elif current_gesture == 'fist':
+            elif current_gesture == 'xsign':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_x += node.control_step
-                    node.publish_position("FRENTE")
+                    node.publish_relative_position("FRENTE", node.control_step, 0.0, 0.0, 0.0)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "FRENTE", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -312,8 +308,7 @@ def main(args=None):
             elif current_gesture == 'palm':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_x -= node.control_step
-                    node.publish_position("TRAS")
+                    node.publish_relative_position("TRAS", -node.control_step, 0.0, 0.0, 0.0)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "TRAS", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -321,8 +316,7 @@ def main(args=None):
             elif current_gesture == 'peace':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_heading -= node.heading_step
-                    node.publish_position("YAW_DIREITA")
+                    node.publish_relative_position("YAW_DIREITA", 0.0, 0.0, 0.0, -node.heading_step)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "GIRAR DIREITA", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
                 
@@ -330,8 +324,7 @@ def main(args=None):
             elif current_gesture == 'peace_inverted':
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
-                    node.target_heading += node.heading_step
-                    node.publish_position("YAW_ESQUERDA")
+                    node.publish_relative_position("YAW_ESQUERDA", 0.0, 0.0, 0.0, node.heading_step)
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "GIRAR ESQUERDA", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 

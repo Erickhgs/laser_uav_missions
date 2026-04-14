@@ -1,0 +1,32 @@
+/**/**:
+  ros__parameters:
+    frequency: 100.0 # Hz
+
+    odometry_switch_distance_threshold: 0.5 # meters
+    odometry_switch_angle_threshold: 0.1 # radians
+    odometry_switch_velocity_linear_threshold: 0.1 # m/s
+    odometry_switch_velocity_angular_threshold: 0.1 # rad/s
+
+    initial_odometry_source: "fast_lio_odom"
+    odometry_source_names: ["px4_api_odom", "openvins_odom", "fast_lio_odom"]
+    
+    ekf_verbosity: "WARNING" # Options: SILENT, ERROR, WARNING, INFO, DEBUG, VERBOSE
+
+    px4_odom_tolerance: 0.015 # seconds
+    px4_odom_timeout: 0.5 # seconds
+    px4_odom_covariance: 0.5
+
+    openvins_odom_tolerance: 0.0075 # seconds
+    openvins_odom_timeout: 1.0 # seconds
+    openvins_odom_covariance: 0.5
+
+    fast_lio_odom_tolerance: 0.025 # seconds
+    fast_lio_odom_timeout: 1.0 # seconds
+    fast_lio_odom_covariance: 0.5
+
+    imu_tolerance: 0.015 # seconds
+    imu_timeout: 0.5 # seconds
+    imu_covariance: 0.5
+    
+    control_tolerance: 0.015 # seconds
+    control_timeout: 0.5 # seconds
