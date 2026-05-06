@@ -6,7 +6,7 @@ windows:
   - spawn:
       layout: even-horizontal
       panes:
-        - ros2 launch laser_challenge_simulation gazebo.launch.py real_time:=0.35
+        - ros2 launch laser_challenge_simulation gazebo.launch.py real_time:=1.0
         - ros2 launch laser_uav_simulation spawn_drones.launch.py spawn_drones_file:=./configs/spawn.yaml
   - px4_api:
       layout: tiled
