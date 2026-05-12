@@ -20,12 +20,14 @@ class GestureControlNode(Node):
         self.declare_parameter('takeoff_duration', 3.0)
         self.declare_parameter('land_duration', 3.0)
         self.declare_parameter('control_rate', 0.20) 
-        self.declare_parameter('yaw_gain_p', 0.001) # Ganho Proporcional do Yaw (ajuste se ficar muito rápido/lento)
+        self.declare_parameter('yaw_gain_p', 0.001) 
+        self.declare_parameter('yaw_deadzone', 50.0) # +/- 50 pixels do centro
         
         self.takeoff_duration = self.get_parameter('takeoff_duration').value
         self.land_duration = self.get_parameter('land_duration').value
         self.control_step = self.get_parameter('control_rate').value
         self.yaw_gain_p = self.get_parameter('yaw_gain_p').value
+        self.yaw_deadzone = self.get_parameter('yaw_deadzone').value
 
         # Variáveis auxiliares de estado absoluto
         self.target_x = 0.0
@@ -68,7 +70,7 @@ class GestureControlNode(Node):
             10
         )
 
-        self.get_logger().info(f"Nó Iniciado. Auto-Yaw ativado com ganho P: {self.yaw_gain_p}")
+        self.get_logger().info(f"Nó Iniciado. Auto-Yaw com Deadzone de {self.yaw_deadzone}px")
 
     def diag_callback(self, msg):
         self.is_fly = msg.is_fly
@@ -87,13 +89,11 @@ class GestureControlNode(Node):
         if not self.odom_received:
             self.odom_received = True
 
-
         if not self.is_fly:
             self.target_x = self.current_real_x
             self.target_y = self.current_real_y
             self.target_heading = self.current_real_yaw
-            if self.current_real_z > 0.5:
-                self.target_z = self.current_real_z
+            self.target_z = 1.5 
 
     def call_takeoff(self):
         if self.takeoff_client.service_is_ready():
@@ -108,11 +108,12 @@ class GestureControlNode(Node):
         return False
 
     def publish_position(self, direction_msg="GOTO"):
+        self.get_logger().info(f"Cmd: {direction_msg} | X={self.target_x:.2f}, Y={self.target_y:.2f}, Z={self.target_z:.2f}, Yaw={self.target_heading:.2f}")
         msg = PoseWithHeading()
-        msg.position.x = self.target_x
-        msg.position.y = self.target_y
-        msg.position.z = self.target_z
-        msg.heading = self.target_heading
+        msg.position.x = float(self.target_x)
+        msg.position.y = float(self.target_y)
+        msg.position.z = float(self.target_z)
+        msg.heading = float(self.target_heading)
         self.goto_publisher.publish(msg)
 
 
@@ -120,7 +121,6 @@ def main(args=None):
     rclpy.init(args=args)
     node = GestureControlNode()
 
-    # --- 1. CARREGAR MODELO DE GESTOS ---
     try:
         pkg_share = get_package_share_directory('laser_uav_missions') 
         model_path = os.path.join(pkg_share, 'models', 'model.pt') 
@@ -138,12 +138,12 @@ def main(args=None):
     pose_model = YOLO('yolov8n-pose.pt')
     node.get_logger().info("Modelos YOLO carregados com sucesso!")
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(5)
     if not cap.isOpened():
         node.get_logger().error("Falha ao abrir a webcam!")
         return
 
-    # Pegar o centro da imagem para o cálculo do Yaw
+    # Dimensões da tela para o cálculo do centro
     ret, frame_teste = cap.read()
     frame_teste = cv2.resize(frame_teste, (640, 480))
     center_x_image = frame_teste.shape[1] / 2
@@ -155,8 +155,10 @@ def main(args=None):
     
     last_cmd_time = 0.0
     last_yaw_time = 0.0
-    CMD_COOLDOWN = 0.8 
-    YAW_COOLDOWN = 0.1 # Atualiza o Yaw a 10Hz para ser mais suave
+    
+
+    CMD_COOLDOWN = 0.5 # 2 Hz
+    YAW_COOLDOWN = 0.5 # 2 Hz 
 
     try:
         while rclpy.ok():
@@ -169,15 +171,13 @@ def main(args=None):
             frame_flipped = cv2.flip(frame, 1)
             current_time = time.time()
 
-            # Roda gestos
+            # Inferências
             gesture_results = gesture_model(frame_flipped, verbose=False)
-            # Roda pose humana
             pose_results = pose_model(frame_flipped, verbose=False)
 
             current_gesture = None
             highest_conf = 0.0
 
-            # Extrai o gesto
             for result in gesture_results:
                 for box in result.boxes:
                     conf = box.conf.item()
@@ -188,6 +188,9 @@ def main(args=None):
 
             annotated_frame = gesture_results[0].plot() if len(gesture_results) > 0 else frame_flipped.copy()
 
+            # DESENHAR ZONA MORTA NA TELA
+            cv2.line(annotated_frame, (int(center_x_image - node.yaw_deadzone), 0), (int(center_x_image - node.yaw_deadzone), 480), (0, 255, 255), 1)
+            cv2.line(annotated_frame, (int(center_x_image + node.yaw_deadzone), 0), (int(center_x_image + node.yaw_deadzone), 480), (0, 255, 255), 1)
 
             nose_x, nose_y = None, None
             for r in pose_results:
@@ -196,26 +199,38 @@ def main(args=None):
                     if len(kpts) > 0:
                         nose_x, nose_y = float(kpts[0][0]), float(kpts[0][1])
                         
-                        # Desenha na mesma imagem anotada
                         if nose_x > 0 and nose_y > 0:
                             cv2.circle(annotated_frame, (int(nose_x), int(nose_y)), 8, (0, 255, 0), -1)
                             cv2.line(annotated_frame, (int(center_x_image), int(nose_y)), (int(nose_x), int(nose_y)), (255, 0, 0), 2)
-                            cv2.putText(annotated_frame, "Rastreando Face", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                            
+                            # Verifica visualmente se está dentro ou fora da zona morta
+                            error_x = center_x_image - nose_x
+                            if abs(error_x) <= node.yaw_deadzone:
+                                cv2.putText(annotated_frame, "Face Centralizada (OK)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                            else:
+                                cv2.putText(annotated_frame, "Ajustando Yaw...", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
+            # LÓGICA DO AUTO YAW
             if nose_x is not None and nose_x > 0 and node.is_fly:
                 if (current_time - last_yaw_time) > YAW_COOLDOWN:
                     error_x = center_x_image - nose_x 
                     
-                    yaw_adjustment = error_x * node.yaw_gain_p
-                    yaw_adjustment = max(-0.15, min(0.15, yaw_adjustment)) 
-                    
-                    node.target_heading += yaw_adjustment
-                    node.publish_position("AUTO_YAW")
-                    last_yaw_time = current_time
+                    if abs(error_x) > node.yaw_deadzone:
+                        yaw_adjustment = error_x * node.yaw_gain_p
+                        
+
+                        yaw_adjustment = max(-0.05, min(0.05, yaw_adjustment)) 
+                        
+                        node.target_heading += yaw_adjustment
+                        
+                        if node.target_z < 0.5: 
+                            node.target_z = 1.5
+                            
+                        node.publish_position(f"AUTO_YAW ({yaw_adjustment:.3f} rad)")
+                        last_yaw_time = current_time
 
             # --- 4. LÓGICA DE GESTOS E RTL ---
             if node.rtl_state > 0:
-                # Máquina de estados do RTL (igual estava antes)
                 if node.rtl_state == 1:
                     cv2.putText(annotated_frame, "RTL: AGUARDANDO POUSO...", (30, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
                     if not node.is_fly: 
@@ -255,7 +270,7 @@ def main(args=None):
                 if elapsed < node.takeoff_duration:
                     cv2.putText(annotated_frame, f"DECOLAR EM: {node.takeoff_duration - elapsed:.1f}s", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
                 elif not takeoff_triggered:
-                    node.target_z = 1.5
+                    node.target_z = 1.5 
                     if node.call_takeoff(): takeoff_triggered = True
                 else:
                     cv2.putText(annotated_frame, "DECOLANDO...", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
@@ -279,7 +294,7 @@ def main(args=None):
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
                     node.target_z = min(15.0, node.target_z + node.control_step)
-                    node.publish_position()
+                    node.publish_position("SUBIR")
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "SUBINDO", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -287,7 +302,7 @@ def main(args=None):
                 takeoff_start_time = None; land_start_time = None
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
                     node.target_z = max(0.5, node.target_z - node.control_step)
-                    node.publish_position()
+                    node.publish_position("DESCER")
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "DESCENDO", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -296,7 +311,7 @@ def main(args=None):
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
                     node.target_x += node.control_step * math.sin(node.target_heading)
                     node.target_y -= node.control_step * math.cos(node.target_heading)
-                    node.publish_position()
+                    node.publish_position("DIREITA")
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "DIREITA", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -305,7 +320,7 @@ def main(args=None):
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
                     node.target_x -= node.control_step * math.sin(node.target_heading)
                     node.target_y += node.control_step * math.cos(node.target_heading)
-                    node.publish_position()
+                    node.publish_position("ESQUERDA")
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "ESQUERDA", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -314,7 +329,7 @@ def main(args=None):
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
                     node.target_x += node.control_step * math.cos(node.target_heading)
                     node.target_y += node.control_step * math.sin(node.target_heading)
-                    node.publish_position()
+                    node.publish_position("FRENTE")
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "FRENTE", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -323,7 +338,7 @@ def main(args=None):
                 if (current_time - last_cmd_time) > CMD_COOLDOWN:
                     node.target_x -= node.control_step * math.cos(node.target_heading)
                     node.target_y -= node.control_step * math.sin(node.target_heading)
-                    node.publish_position()
+                    node.publish_position("TRAS")
                     last_cmd_time = current_time
                 cv2.putText(annotated_frame, "TRAS", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 3)
 
@@ -333,7 +348,6 @@ def main(args=None):
 
             cv2.putText(annotated_frame, f"Bases: {node.landing_count}/6", (480, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
 
-            # Exibe a única janela compilando tudo
             cv2.imshow('Gesture Control ROS 2 - YOLOv8', annotated_frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
