@@ -6,12 +6,12 @@ windows:
   - spawn:
       layout: even-horizontal
       panes:
-        - ros2 launch laser_challenge_simulation gazebo.launch.py real_time:=1.0
+        - ros2 launch laser_challenge_simulation gazebo.launch.py real_time:=1.0 
         - ros2 launch laser_uav_simulation spawn_drones.launch.py spawn_drones_file:=./configs/spawn.yaml
   - px4_api:
       layout: tiled
       panes:
-        - sleep 1; ros2 launch laser_uav_px4_api api.launch.py api_file:="./configs/api.yaml"
+        - sleep 1; ros2 launch laser_uav_hw_api px4_api.launch.py api_file:="./configs/api.yaml"
         - sleep 1; ros2 run laser_uav_simulation autostart.py 
   - estimation_manager:
       layout: tiled
@@ -20,7 +20,7 @@ windows:
   - tui:
       layout: even-horizontal
       panes:
-        - sleep 1; ros2 run laser_uav_tui tui
+        - sleep 1; ros2 run laser_uav_tui tui 
   - gesture:
       layout: even-horizontal
       panes:
