@@ -2,5 +2,7 @@
   ros__parameters:
     - id: 1
       type: "lr7pro"
+      fcu: "px4"
       pose_spawn: [0.0,0.0,0.63,0.0] # x y z yaw
-      sensors: ["--enable_livox --enable_ground_truth "]
+      sensors: "--enable_livox --enable_ground_truth"
+
