@@ -136,6 +136,7 @@ def main(args=None):
     
     last_cmd_time = 0.0
     CMD_COOLDOWN = 0.5 # 2 Hz
+    first_time_center = False
 
     try:
         while rclpy.ok():
@@ -163,6 +164,10 @@ def main(args=None):
                         current_gesture = gesture_model.names[class_id]
 
             annotated_frame = gesture_results[0].plot() if len(gesture_results) > 0 else frame_flipped.copy()
+
+            if node.is_fly and not first_time_center:
+                node.publish_relative(1.5, -3.0, 0.0, direction_msg="CENTRALIZAR")
+                first_time_center = True
 
             # --- LÓGICA DE RTL ---
             if node.rtl_state > 0:
