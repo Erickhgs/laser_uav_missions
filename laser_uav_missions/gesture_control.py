@@ -166,7 +166,9 @@ def main(args=None):
             annotated_frame = gesture_results[0].plot() if len(gesture_results) > 0 else frame_flipped.copy()
 
             if node.is_fly and not first_time_center:
-                node.publish_relative(1.5, -3.0, 0.0, direction_msg="CENTRALIZAR")
+                node.publish_relative(1.5, 0.0, -0.5, direction_msg="CENTRALIZAR")
+                time.sleep(5.0)
+                node.publish_relative(0.0, -3.0, 0.0, direction_msg="CENTRALIZAR")
                 first_time_center = True
 
             # --- LÓGICA DE RTL ---
